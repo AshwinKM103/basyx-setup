@@ -1,0 +1,20 @@
+infrastructures:
+  default: infra1
+  infra1:
+    name: Wind Turbine Digital Twin
+    components:
+      aasRepository:
+        baseUrl: http://localhost:8082/shells
+        hasRegistryIntegration: true
+      aasRegistry:
+        baseUrl: http://localhost:8082/shell-descriptors
+        hasDiscoveryIntegration: true
+      submodelRepository:
+        baseUrl: http://localhost:8082/submodels
+        hasRegistryIntegration: true
+      submodelRegistry:
+        baseUrl: http://localhost:8082/submodel-descriptors
+      conceptDescriptionRepository:
+        baseUrl: http://localhost:8082/concept-descriptions
+    security:
+      type: none
