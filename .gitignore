@@ -41,6 +41,10 @@ htmlcov/
 influxdb/data/*
 mosquitto/data/*
 mosquitto/log/*
+mosquitto/
+
+# Vendored dependencies (if present)
+awesome-claude-code-toolkit/
 
 # Node modules (if any)
 node_modules/
