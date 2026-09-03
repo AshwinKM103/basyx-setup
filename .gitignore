@@ -2,6 +2,10 @@
 .env
 .env.local
 .env.*.local
+.env.*.bak
+
+# Private keys (never commit secrets)
+basyx/*.pem
 
 # Python
 __pycache__/
@@ -41,7 +45,6 @@ htmlcov/
 influxdb/data/*
 mosquitto/data/*
 mosquitto/log/*
-mosquitto/
 
 # Vendored dependencies (if present)
 awesome-claude-code-toolkit/

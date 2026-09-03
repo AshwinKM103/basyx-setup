@@ -89,7 +89,7 @@ services:
       ALLOW_LOGOUT: 'true'
       SM_VIEWER_EDITOR: 'true'
       START_PAGE_ROUTE_NAME: AASViewer
-      INFLUXDB_TOKEN: ${INFLUXDB_TOKEN:-FC9633034lS16qXKT8Gv6TRgIfhbhMGvAT1ggQsqW7Ed4NzTPCgnv4i98S5AJOpoeeqOqegDr1jcHVp5RFLgFQ==}
+      INFLUXDB_TOKEN: ${INFLUXDB_TOKEN:-T8s57FEsJmZET/m0wAIB1ELo989hUzRJg2DGIa5zBiE0u3xroDCl6GX4amg=}
     volumes:
       - ./basyx-infra.yml:/basyx-infra.yml:ro
     depends_on:
@@ -110,7 +110,7 @@ services:
       DOCKER_INFLUXDB_INIT_PASSWORD: ${INFLUXDB_PASSWORD:-influxpassword}
       DOCKER_INFLUXDB_INIT_ORG: ${INFLUXDB_ORG:-basyx}
       DOCKER_INFLUXDB_INIT_BUCKET: ${INFLUXDB_BUCKET:-wind_turbine}
-      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: ${INFLUXDB_TOKEN:-FC9633034lS16qXKT8Gv6TRgIfhbhMGvAT1ggQsqW7Ed4NzTPCgnv4i98S5AJOpoeeqOqegDr1jcHVp5RFLgFQ==}
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: ${INFLUXDB_TOKEN:-T8s57FEsJmZET/m0wAIB1ELo989hUzRJg2DGIa5zBiE0u3xroDCl6GX4amg=}
       INFLUXD_LOG_LEVEL: debug
     restart: unless-stopped
 
@@ -140,7 +140,7 @@ services:
       - /etc/telegraf/telegraf.conf
       - '--debug'
     environment:
-      - INFLUXDB_TOKEN=${INFLUXDB_TOKEN:-FC9633034lS16qXKT8Gv6TRgIfhbhMGvAT1ggQsqW7Ed4NzTPCgnv4i98S5AJOpoeeqOqegDr1jcHVp5RFLgFQ==}
+      - INFLUXDB_TOKEN=${INFLUXDB_TOKEN:-T8s57FEsJmZET/m0wAIB1ELo989hUzRJg2DGIa5zBiE0u3xroDCl6GX4amg=}
       - INFLUXDB_ORG=${INFLUXDB_ORG:-basyx}
       - INFLUXDB_BUCKET=${INFLUXDB_BUCKET:-wind_turbine}
       - INFLUXDB_HOST=${INFLUXDB_HOST:-influxdb}

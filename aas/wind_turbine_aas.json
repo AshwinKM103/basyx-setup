@@ -328,7 +328,7 @@
                   "description": [
                     {
                       "language": "en",
-                      "text": "MANUAL SYNC REQUIRED: this value (milliseconds) must match .env's SIMULATOR_INTERVAL_SECONDS * 1000 (default: 1000ms = 1s). If you change SIMULATOR_INTERVAL_SECONDS, update this value too and reload the AAS. See SYNC_AAS.md."
+                      "text": "Manual sync required: this value in milliseconds must match SIMULATOR_INTERVAL_SECONDS * 1000 in .env (default 1000 ms). Update it here and reload the AAS if that changes. See 'Known limitations' in README.md."
                     }
                   ],
                   "semanticId": {
@@ -346,7 +346,7 @@
                   "description": [
                     {
                       "language": "en",
-                      "text": "MANUAL SYNC REQUIRED: built from .env's INFLUXDB_PUBLIC_ENDPOINT + '/api/v2/query?org=' + INFLUXDB_ORG. This runs client-side in the browser (aas-gui), so it must use the host-reachable endpoint (localhost), not the Docker service name. If either .env value changes, update this Property and reload the AAS. See SYNC_AAS.md."
+                      "text": "Manual sync required: built from INFLUXDB_PUBLIC_ENDPOINT + '/api/v2/query?org=' + INFLUXDB_ORG in .env. The query runs client-side in the browser, so this must be the host-reachable address, not the influxdb Docker service name. See 'Known limitations' in README.md."
                     }
                   ],
                   "semanticId": {
@@ -364,7 +364,7 @@
                   "description": [
                     {
                       "language": "en",
-                      "text": "MANUAL SYNC REQUIRED: the Flux query's bucket:\"...\" must match .env's INFLUXDB_BUCKET, and _measurement == \"...\" must match .env's TELEGRAF_MEASUREMENT. If either changes, update this query string and reload the AAS. See SYNC_AAS.md."
+                      "text": "Manual sync required: bucket must match INFLUXDB_BUCKET and _measurement must match TELEGRAF_MEASUREMENT in .env. Update this query and reload the AAS if either changes. See 'Known limitations' in README.md."
                     }
                   ],
                   "semanticId": {

@@ -1,369 +1,385 @@
 # BaSyx Wind-Turbine Digital Twin
 
-A complete local Eclipse BaSyx digital-twin stack for a wind turbine, combining semantic asset metadata with real-time telemetry data. The system separates concerns into three data planes: the AAS (Asset Administration Shell) served from PostgreSQL, time-series telemetry in InfluxDB, and a web UI that reads both.
+A local Eclipse BaSyx digital twin of a wind turbine, combining semantic asset metadata with live
+telemetry. The stack runs entirely in Docker and keeps three data planes separate:
 
-**Everything runs in Docker.** No dependencies to install—just Docker, `.env`, and `docker compose up`.
+| Plane | Contents | Store |
+|---|---|---|
+| Semantic / asset | AAS shells, submodels, registry, discovery | PostgreSQL, served by `aas-environment` |
+| Time series | Wind speed, RPM, power, temperatures, angles | InfluxDB 2.7 |
+| Presentation | Browsing and charting of both planes | BaSyx AAS Web UI |
+
+Telemetry never enters the AAS itself. The `TimeSeries` submodel stores only a link to InfluxDB (an
+endpoint plus a Flux query), and the UI runs that query when you open the chart.
+
+```
+simulator → mosquitto:1883 → telegraf → influxdb:8086 (bucket: wind_turbine)
+aas/wind_turbine_aas.json → aas-environment:8082 → postgres
+aas-ui:3000 reads aas-environment over REST and influxdb over Flux
+```
 
 ---
 
-## Quick Start (3 minutes)
+## Prerequisites
 
-1. **Copy the environment template** (it has working defaults for local development):
+- Docker Engine 24+ with the Compose v2 plugin (`docker compose version`).
+- OpenSSL, for generating the local signing key in step 2 of the quick start.
+- Free TCP ports on the host: `3000`, `8082`, `8086`, `1883`. All four are configurable in `.env`.
+
+Nothing else needs to be installed. Python, Go, and the databases all run inside containers.
+
+---
+
+## Quick start
+
+1. Copy the environment template. Its defaults work as-is for local development.
    ```bash
    cp .env.example .env
    ```
 
-2. **Start the stack**:
+2. Generate the RSA key that `aas-environment` expects. The repository does not ship one.
+   ```bash
+   openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out basyx/rsa-key.pem
+   ```
+
+3. Start the stack.
    ```bash
    docker compose up -d
    docker compose ps
    ```
-   All services should be running or healthy. `basyx_configuration` is a one-shot job—it runs once at startup and exits with code 0.
+   Every service should report `running` or `healthy`, except `basyx_configuration`, which is a
+   one-shot database initializer and exits with code 0.
 
-3. **Open the UI** and fetch live data:
-   - Open http://localhost:3000
-   - Select `WindTurbineAAS` → `TimeSeries` submodel → Visualization tab
-   - Select the `LinkedSegment` → pick telemetry fields (e.g., `wind_speed`, `power_output`) → **Fetch Data**
+4. Open the UI at http://localhost:3000 and chart live telemetry:
+   1. Select `WindTurbineAAS` from the AAS list.
+   2. Open the `TimeSeries` submodel.
+   3. Switch to the **Visualization** tab.
+   4. Select the `LinkedSegment`.
+   5. Choose y-axis fields, for example `wind_speed`, `power_output`, `rotor_rpm`.
+   6. Click **Fetch Data**.
 
-That's it. No manual configuration needed for local development.
-
----
-
-## What's Running
-
-The stack combines three independent data planes:
-
-| Service | Purpose | Port/Transport |
-|---------|---------|---|
-| **AAS Environment** (`aas-environment`) | REST API serving the Asset Administration Shell, submodels, and registry | HTTP `8082` |
-| **AAS Web UI** (`aas-ui`) | Interactive UI for browsing the AAS and visualizing telemetry | HTTP `3000` |
-| **PostgreSQL** (`db`) | Storage for all AAS data (shells, submodels, assets) | Internal (Docker network) |
-| **InfluxDB** (`influxdb`) | Time-series database for wind-turbine telemetry readings | HTTP `8086` |
-| **Mosquitto** (`mosquitto`) | MQTT broker for live telemetry messages | TCP `1883` |
-| **Telegraf** (`telegraf`) | Bridge: reads MQTT, writes to InfluxDB | Internal (Docker network) |
-| **Simulator** (`simulator`) | Replays mock wind-turbine CSV data to MQTT at 1 Hz | Internal (Docker network) |
-
-**Data flow**: Simulator (Python) → MQTT (Mosquitto) → Telegraf → InfluxDB (bucket: `wind_turbine`)
+   The chart shows the last 15 minutes of telemetry and extends as the simulator publishes new
+   readings. If the stack has only just started, wait a few seconds for the first Telegraf flush.
 
 ---
 
-## Environment Configuration (`.env`)
+## What's running
 
-All configuration is externalized to environment variables. The template `.env.example` documents the defaults; `docker-compose.yml` reads `.env` automatically and provides fallbacks for every variable, so the stack starts even without `.env`.
+| Service | Container | Role | Exposed on |
+|---|---|---|---|
+| `aas-environment` | `aas-environment` | REST API for shells, submodels, registry, discovery | `8082` |
+| `aas-ui` | `aas-web-ui` | Web UI for browsing the AAS and charting telemetry | `3000` |
+| `db` | `postgres_db` | Storage for all AAS data | Docker network only |
+| `basyx_configuration` | `basyx_configuration` | One-shot schema initializer, exits after setup | Docker network only |
+| `influxdb` | `influxdb` | Time-series store for turbine telemetry | `8086` |
+| `mosquitto` | `mosquitto` | MQTT broker carrying telemetry messages | `1883` |
+| `telegraf` | `telegraf` | Bridge that subscribes to MQTT and writes to InfluxDB | Docker network only |
+| `simulator` | `wind-turbine-simulator` | Replays mock telemetry to MQTT at 1 Hz | Docker network only |
 
-To override any value, edit `.env` and re-run `docker compose up -d`. Containers pick up new values on restart; no rebuild needed.
+### Endpoints
 
-### Configuration Variables
-
-#### PostgreSQL (Semantic Data)
-
-| Variable | Default | What it controls | Change when | Used by |
-|----------|---------|------------------|-------------|---------|
-| `POSTGRES_USER` | `admin` | PostgreSQL admin username | Using a different user in production | `db`, `aas-environment`, `basyx_configuration` |
-| `POSTGRES_PASSWORD` | `admin123` | PostgreSQL admin password | **Always change before production** | `db`, `aas-environment`, `basyx_configuration` |
-| `POSTGRES_DB` | `basyxTestDB` | Initial database name | You want a different db name | `db`, `aas-environment`, `basyx_configuration` |
-| `POSTGRES_HOST` | `db` | PostgreSQL host (internal Docker name) | Running PostgreSQL on a separate host | `aas-environment`, `basyx_configuration` |
-| `POSTGRES_PORT` | `5432` | PostgreSQL port | PostgreSQL runs on a different port | `aas-environment`, `basyx_configuration` |
-| `POSTGRES_MAXOPENCONNECTIONS` | `500` | Max open DB connections from AAS services | Under high concurrent load (tuning, not typical) | `aas-environment`, `basyx_configuration` |
-| `POSTGRES_MAXIDLECONNECTIONS` | `500` | Max idle connections held open | Reducing memory under low load | `aas-environment`, `basyx_configuration` |
-| `POSTGRES_CONNMAXLIFETIMEMINUTES` | `5` | Max lifetime (minutes) before a connection is closed | Enforcing connection recycling for long-lived deployments | `aas-environment`, `basyx_configuration` |
-
-#### InfluxDB (Time-Series Telemetry)
-
-| Variable | Default | What it controls | Change when | Used by |
-|----------|---------|------------------|-------------|---------|
-| `INFLUXDB_USERNAME` | `admin` | InfluxDB admin username | Using a different user in production | `influxdb` |
-| `INFLUXDB_PASSWORD` | `influxpassword` | InfluxDB admin password | **Always change before production** | `influxdb` |
-| `INFLUXDB_ORG` | `basyx` | InfluxDB organization name | You want a different org name | `influxdb`, `telegraf` |
-| `INFLUXDB_BUCKET` | `wind_turbine` | InfluxDB bucket (data storage) | You want a different bucket name for telemetry | `influxdb`, `telegraf` |
-| `INFLUXDB_TOKEN` | (see Security notes) | API token for programmatic access to InfluxDB | **Always rotate before production** | `influxdb`, `telegraf`, `aas-ui` |
-| `INFLUXDB_HOST` | `influxdb` | InfluxDB hostname (internal Docker name) | InfluxDB runs on a separate host | `telegraf` (internal) |
-| `INFLUXDB_PORT` | `8086` | InfluxDB port | InfluxDB runs on a different port | `telegraf` (internal) |
-| `INFLUXDB_PUBLIC_ENDPOINT` | `http://localhost:8086` | Public URL for the AAS UI to query InfluxDB | InfluxDB is behind a proxy or on a different host | Documentation reference only; **⚠️ see Known Limitations** |
-
-#### MQTT (Telemetry Transport)
-
-| Variable | Default | What it controls | Change when | Used by |
-|----------|---------|------------------|-------------|---------|
-| `MQTT_BROKER` | `mosquitto` | MQTT broker hostname (internal Docker name) | Broker runs on a separate host | `simulator`, `telegraf` |
-| `MQTT_PORT` | `1883` | MQTT broker port | Broker runs on a different port | `simulator`, `telegraf` |
-| `MQTT_TOPIC` | `WindTurbine/Telemetry` | MQTT topic for telemetry messages | Publishing to a different topic name | `simulator`, `telegraf` |
-
-#### Telegraf (Data Bridge)
-
-| Variable | Default | What it controls | Change when | Used by |
-|----------|---------|------------------|-------------|---------|
-| `TELEGRAF_INTERVAL` | `1s` | Collection interval (read MQTT, sample time-series) | You want coarser or finer granularity | `telegraf` |
-| `TELEGRAF_FLUSH_INTERVAL` | `10s` | Batch flush interval (write to InfluxDB) | Reducing latency or write pressure | `telegraf` |
-| `TELEGRAF_BATCH_SIZE` | `1000` | Points per InfluxDB write batch | Tuning write throughput under high volume | `telegraf` |
-| `TELEGRAF_BUFFER_LIMIT` | `10000` | Max points to buffer in memory before dropping | Handling MQTT spikes without data loss | `telegraf` |
-| `TELEGRAF_MEASUREMENT` | `wind_turbine_metric` | InfluxDB measurement name (time-series table) | You want a different measurement name | `telegraf` |
-
-#### AAS (Asset Administration Shell)
-
-| Variable | Default | What it controls | Change when | Used by |
-|----------|---------|------------------|-------------|---------|
-| `AAS_ENVIRONMENT_PORT` | `8082` | AAS REST API port (HTTP) | Port 8082 is already in use | `aas-environment` |
-| `AAS_GUI_PORT` | `3000` | Web UI port (HTTP) | Port 3000 is already in use | `aas-ui` |
-| `AAS_EXTERNAL_URL` | `http://localhost:8082` | URL for AAS Environment (used by discovery) | AAS is behind a proxy or reverse-proxy | `aas-environment` |
-
-#### Simulator
-
-| Variable | Default | What it controls | Change when | Used by |
-|----------|---------|------------------|-------------|---------|
-| `SIMULATOR_INTERVAL_SECONDS` | `1` | Time between MQTT messages from the simulator (seconds) | You want faster or slower mock data replay | `simulator` |
-
-### How Telegraf Reads These Variables
-
-Telegraf expands `${VAR}` references in `telegraf/telegraf.conf` automatically at process start. The references are resolved from the Telegraf container's environment, which `docker-compose.yml` populates from `.env`. Every `${VAR}` in the config file has a `:-default` fallback in the compose file, so edits to `telegraf.conf` are not needed.
+| Endpoint | URL | Access |
+|---|---|---|
+| AAS REST API | http://localhost:8082 | No authentication |
+| AAS Web UI | http://localhost:3000 | No authentication |
+| InfluxDB UI | http://localhost:8086 | `INFLUXDB_USERNAME` / `INFLUXDB_PASSWORD`, by default `admin` / `influxpassword` |
+| MQTT broker | `localhost:1883` | Anonymous, unencrypted |
 
 ---
 
-## Endpoints
+## The wind turbine AAS
 
-Once the stack is running, access services at:
+`aas/wind_turbine_aas.json` defines the shell. `aas-environment` loads it at startup from the
+preconfiguration directory (`GENERAL_AAS_PRECONFIG_PATHS`), so no manual upload is needed.
 
-| Service | URL | Credentials / Notes |
-|---------|-----|---|
-| **AAS REST API** | http://localhost:8082 | No auth required (dev mode) |
-| **AAS Web UI** | http://localhost:3000 | No auth required (dev mode) |
-| **InfluxDB UI** | http://localhost:8086 | Username: `admin`, Password: from `INFLUXDB_PASSWORD` in `.env` (default `influxpassword`) |
-| **MQTT Broker** | `localhost:1883` | Anonymous, no auth |
-
----
-
-## Wind Turbine AAS
-
-The Wind Turbine Asset Administration Shell is defined in `aas/wind_turbine_aas.json` and is loaded automatically when `aas-environment` starts (via `GENERAL_AAS_PRECONFIG_PATHS`).
-
-The AAS contains four submodels:
-
-- **Nameplate**: Manufacturer, serial number, rated power output
-- **TechnicalData**: Rotor diameter, hub height, cut-in/rated/cut-out wind speeds
-- **OperationalState**: Current status, last-updated timestamp, fault codes
-- **TimeSeries** (IDTA standard): A `LinkedSegment` that points to InfluxDB and a Flux query to fetch live telemetry data
-
-### Viewing Telemetry
-
-1. Open http://localhost:3000
-2. Select `WindTurbineAAS` from the AAS list
-3. Click the `TimeSeries` submodel
-4. Go to the **Visualization** tab
-5. Select the `LinkedSegment`
-6. Choose y-axis values (e.g., `wind_speed`, `power_output`, `rotor_rpm`)
-7. Click **Fetch Data**
-
-You should see a time-series graph of the past 15 minutes of wind-turbine telemetry, updated in real-time as the simulator publishes new data.
-
----
-
-## Verify the Pipeline
-
-Run these commands to confirm the telemetry pipeline is working end-to-end:
-
-```bash
-# 1. Check that MQTT messages are flowing (Simulator → Mosquitto)
-docker exec -it mosquitto mosquitto_sub -t "WindTurbine/Telemetry" -v
-# Expected: one message per second, e.g.
-#   WindTurbine/Telemetry {"wind_speed": 12.5, "power_output": 450, ...}
-
-# 2. Check Telegraf is writing to InfluxDB (Telegraf logs)
-docker logs telegraf --tail 50 | grep -E "Wrote|wrote"
-# Expected: log lines saying "Wrote batch of NNN points to influxdb" with no E! errors
-
-# 3. Check InfluxDB health
-curl http://localhost:8086/health
-# Expected: {"status":"pass","checks":{},...}
-
-# 4. Check AAS is loaded and accessible
-curl http://localhost:8082/shells
-# Expected: JSON array with WindTurbineAAS listed
-```
-
-If any of these fail:
-- **No MQTT messages**: Check that `simulator` container is running (`docker logs simulator`).
-- **Telegraf errors**: Check `docker logs telegraf` for connection issues to MQTT or InfluxDB.
-- **InfluxDB unhealthy**: Verify `INFLUXDB_USERNAME` and `INFLUXDB_PASSWORD` are correct in `.env`.
-- **AAS not loaded**: Check `docker logs aas-environment` for errors loading the JSON file.
-
----
-
-## Known Limitations: Hardcoded AAS JSON Values
-
-The AAS is stored as static JSON (`aas/wind_turbine_aas.json`) and has no template engine. Three values in the `TimeSeries` submodel's `LinkedSegment` are hardcoded and must be kept in sync with `.env` **by hand** if you change the defaults:
-
-### What's Hardcoded
-
-1. **`Endpoint`** property
-   - Current value: `http://localhost:8086/api/v2/query?org=basyx`
-   - Must match: `INFLUXDB_PUBLIC_ENDPOINT` + `?org=${INFLUXDB_ORG}`
-   - Why not automated: The AAS is a portable asset file; templating would introduce tooling lock-in.
-
-2. **`Query`** property (embedded Flux query)
-   - Hardcoded references:
-     - Bucket: `"wind_turbine"` → must match `INFLUXDB_BUCKET`
-     - Measurement: `"wind_turbine_metric"` → must match `TELEGRAF_MEASUREMENT`
-     - Time range: `-15m` (last 15 minutes)
-     - Aggregation window: `2s`
-     - Field list: 8 telemetry fields (wind_speed, power_output, rotor_rpm, etc.)
-   - Why not automated: The query logic lives in the UI plugin, not the AAS. Re-templating would split concerns.
-
-3. **`SamplingInterval`** property
-   - Current value: `1000` (milliseconds)
-   - Must match: `SIMULATOR_INTERVAL_SECONDS * 1000`
-   - Why not automated: The UI plugin uses this to advise on time-series fetch granularity; it's metadata, not configuration.
-
-### What to Do If You Change Defaults
-
-If you change `INFLUXDB_BUCKET`, `INFLUXDB_ORG`, `TELEGRAF_MEASUREMENT`, or `SIMULATOR_INTERVAL_SECONDS` from their defaults:
-
-1. Edit the three values in `aas/wind_turbine_aas.json` to match your new defaults
-2. Restart `aas-environment`, or re-upload the AAS through the UI (`aas-ui` → Upload AAS)
-
-The alternative (dynamic query building in the TimeSeries UI plugin) was evaluated and deferred—it adds complexity to the UI without solving the core problem (the JSON format itself cannot embed conditionals).
-
----
-
-## Security Notes
-
-### For Local Development
-
-- `.env` is **gitignored**. The `.env` file you create locally is never committed.
-- `.env.example` ships with default development credentials (PostgreSQL `admin123`, InfluxDB `influxpassword`, a dev-only InfluxDB token) so the stack works immediately on `localhost`.
-- **Authentication is disabled end-to-end**: `ABAC_ENABLED=false`, and the AAS UI runs with `security: type: none`. This is intentional for a local sandbox.
-
-### Before Production
-
-**Do not run this stack on a public network or the internet.** If you must:
-
-1. **Rotate all secrets in `.env`**:
-   - `POSTGRES_PASSWORD`: Use a strong password (20+ chars, random)
-   - `INFLUXDB_PASSWORD`: Use a strong password (20+ chars, random)
-   - `INFLUXDB_TOKEN`: Generate a new token in the InfluxDB UI
-
-2. **Enable authentication**:
-   - The project README does not document authentication setup (it is deferred). Enabling OIDC/Keycloak is a separate task that requires changes to `basyx-infra.yml` and new configuration files.
-   - If you do enable it, review the architecture guide for details.
-
-3. **Use HTTPS**:
-   - Put the stack behind a reverse proxy (nginx, Caddy) that terminates TLS.
-   - Never expose the services directly to the internet over HTTP.
-
-4. **Restrict network access**:
-   - Only allow traffic from trusted IPs to ports 8082, 3000, 8086, 1883.
-   - Disable Mosquitto anonymous access (`allow_anonymous false` in `mosquitto/config/mosquitto.conf`).
-
-5. **Run security scans**:
-   - Update all Docker images regularly: `docker compose pull && docker compose up -d --force-recreate`
-   - Scan for vulnerable dependencies in Python and Go packages.
-
----
-
-## Data Persistence
-
-- **PostgreSQL data** (AAS/metadata): Stored in the `db` container's default volume. Persists across `docker compose down` (without `-v`).
-- **InfluxDB data** (telemetry): Stored in `./influxdb/data/` (bind-mounted volume). Persists across restarts.
-- **Mosquitto state** (broker logs, subscriptions): Stored in `./mosquitto/` (bind-mounted volume). Persists across restarts.
-
-To wipe all data and start fresh:
-```bash
-docker compose down -v
-rm -rf ./influxdb/data ./mosquitto
-docker compose up -d
-```
-
----
-
-## Files and Directories
-
-| File/Directory | Purpose |
+| Submodel | Contents |
 |---|---|
-| `.env.example` | Template for environment variables (commit this) |
-| `.env` | Your local environment config (gitignored, do not commit) |
-| `docker-compose.yml` | Service definitions and container orchestration |
-| `aas/wind_turbine_aas.json` | Asset Administration Shell definition (loaded at startup) |
-| `basyx-infra.yml` | AAS UI backend configuration (endpoint discovery, auth) |
-| `basyx/rsa-key.pem` | RSA private key (unused in dev mode, generated during initial setup) |
-| `simulator/simulate.py` | Python script that replays telemetry CSV over MQTT |
-| `simulator/data/wind_turbine_mock.csv` | Mock wind-turbine telemetry data (8 columns, 1440 rows, 1-hour recording) |
-| `telegraf/telegraf.conf` | Telegraf config: MQTT consumer → InfluxDB writer |
-| `mosquitto/config/mosquitto.conf` | Mosquitto MQTT broker config |
-| `influxdb/data/` | InfluxDB data directory (persists telemetry across restarts) |
-| `mosquitto/` | Mosquitto state directory (persists broker data) |
+| `Nameplate` | Manufacturer, product designation, serial number, year of construction, rated power |
+| `TechnicalData` | Rated power, rotor diameter, hub height, cut-in / rated / cut-out wind speeds |
+| `OperationalState` | Current status, last-updated timestamp, active fault code |
+| `TimeSeries` | IDTA time-series model: record metadata plus a `LinkedSegment` holding the InfluxDB endpoint and Flux query |
+
+The telemetry payload carries nine fields: `wind_speed`, `rotor_rpm`, `generator_rpm`,
+`power_output`, `nacelle_temp`, `gearbox_oil_temp`, `pitch_angle`, `yaw_angle`, and `status`.
+The first eight are numeric and appear in the chart; `status` is a string enum
+(`RUNNING`, `IDLE`, `FAULT`, `MAINTENANCE`) stored as a string field in InfluxDB.
 
 ---
 
-## Common Questions
+## Configuration
 
-**Q: Can I use real sensor data instead of the simulator?**
+All settings live in `.env`. `docker-compose.yml` also carries a `${VAR:-default}` fallback for
+every variable, so the stack starts even without an `.env` file. To change a value, edit `.env` and
+run `docker compose up -d` again; containers pick up new values on restart and no rebuild is needed.
 
-A: Yes. Replace the simulator container with your own data source (OPC UA, Modbus, direct HTTP polling, or a custom MQTT publisher). Telegraf's MQTT consumer and InfluxDB output remain unchanged. You only need to ensure messages arrive on the `MQTT_TOPIC` in the same JSON format.
+Telegraf expands `${VAR}` references in `telegraf/telegraf.conf` at startup, reading them from the
+container environment that Compose populates. Editing `telegraf.conf` directly is not required.
 
-**Q: How do I change the telemetry refresh rate in the UI?**
+### PostgreSQL (semantic data)
 
-A: Edit `SIMULATOR_INTERVAL_SECONDS` in `.env` (default `1` = one message per second). Restart the simulator: `docker compose up -d simulator`. Also update `SamplingInterval` in `aas/wind_turbine_aas.json` (value in milliseconds) to match, then restart `aas-environment`.
+| Variable | Default | Controls |
+|---|---|---|
+| `POSTGRES_USER` | `admin` | Database username |
+| `POSTGRES_PASSWORD` | `admin123` | Database password. Change before any non-local use |
+| `POSTGRES_DB` | `basyxTestDB` | Database name created at first start |
+| `POSTGRES_HOST` | `db` | Hostname the AAS services connect to |
+| `POSTGRES_PORT` | `5432` | Database port |
+| `POSTGRES_MAXOPENCONNECTIONS` | `500` | Connection-pool ceiling for the AAS services |
+| `POSTGRES_MAXIDLECONNECTIONS` | `500` | Idle connections kept open |
+| `POSTGRES_CONNMAXLIFETIMEMINUTES` | `5` | Minutes before a pooled connection is recycled |
 
-**Q: Can I add more submodels to the AAS?**
+### InfluxDB (telemetry)
 
-A: Yes. Add new submodels to `aas/wind_turbine_aas.json` or upload a new AAS file through the UI. The `aas-environment` REST API (`POST /shells`) can also be used to programmatically create submodels.
+| Variable | Default | Controls |
+|---|---|---|
+| `INFLUXDB_USERNAME` | `admin` | Initial admin user |
+| `INFLUXDB_PASSWORD` | `influxpassword` | Initial admin password. Change before any non-local use |
+| `INFLUXDB_ORG` | `basyx` | Organization name |
+| `INFLUXDB_BUCKET` | `wind_turbine` | Bucket that receives telemetry |
+| `INFLUXDB_TOKEN` | dev-only default, see [Security notes](#security-notes) | API token used by Telegraf and the UI |
+| `INFLUXDB_HOST` | `influxdb` | Hostname Telegraf writes to |
+| `INFLUXDB_PORT` | `8086` | Port, published to the host |
+| `INFLUXDB_PUBLIC_ENDPOINT` | `http://localhost:8086` | Browser-reachable URL. Not consumed by any container; it documents the value hardcoded in the AAS, see [Known limitations](#known-limitations) |
 
-**Q: How do I back up the data?**
+### MQTT
 
-A: Backup `./influxdb/data/` (telemetry) and the PostgreSQL database using `docker exec db pg_dump`:
+| Variable | Default | Controls |
+|---|---|---|
+| `MQTT_BROKER` | `mosquitto` | Broker hostname used by the simulator and Telegraf |
+| `MQTT_PORT` | `1883` | Broker port, published to the host |
+| `MQTT_TOPIC` | `WindTurbine/Telemetry` | Topic the simulator publishes to and Telegraf subscribes to |
+
+### Telegraf
+
+| Variable | Default | Controls |
+|---|---|---|
+| `TELEGRAF_INTERVAL` | `1s` | Agent collection interval |
+| `TELEGRAF_FLUSH_INTERVAL` | `10s` | How often buffered points are written to InfluxDB |
+| `TELEGRAF_BATCH_SIZE` | `1000` | Points per write batch |
+| `TELEGRAF_BUFFER_LIMIT` | `10000` | Points buffered in memory before the oldest are dropped |
+| `TELEGRAF_MEASUREMENT` | `wind_turbine_metric` | InfluxDB measurement name |
+
+### AAS services
+
+| Variable | Default | Controls |
+|---|---|---|
+| `AAS_ENVIRONMENT_PORT` | `8082` | REST API port, on both the host and the container |
+| `AAS_GUI_PORT` | `3000` | Web UI port on the host |
+| `AAS_EXTERNAL_URL` | `http://localhost:8082` | URL the AAS advertises in registry and discovery entries |
+
+### Simulator
+
+| Variable | Default | Controls |
+|---|---|---|
+| `SIMULATOR_INTERVAL_SECONDS` | `1` | Seconds between published messages |
+| `SIMULATOR_LOG_LEVEL` | `DEBUG` | Python log level; `INFO` quiets the per-message output |
+
+---
+
+## Repository layout
+
+| Path | Purpose |
+|---|---|
+| `docker-compose.yml` | Service definitions for the whole stack |
+| `.env.example` | Environment template. Copy to `.env`, which is gitignored |
+| `aas/wind_turbine_aas.json` | The wind turbine AAS, loaded at `aas-environment` startup |
+| `basyx-infra.yml` | Backend endpoints and security mode for the AAS Web UI |
+| `basyx/rsa-key.pem` | JWS signing key. Gitignored; generate it locally, see [Security notes](#security-notes) |
+| `simulator/simulate.py` | MQTT publisher that replays the mock telemetry CSV |
+| `simulator/data/wind_turbine_mock.csv` | 180 rows of mock telemetry, 10 columns, replayed on a loop |
+| `simulator/Dockerfile` | Python 3.12 image for the simulator |
+| `telegraf/telegraf.conf` | MQTT consumer input and InfluxDB v2 output |
+| `mosquitto/config/mosquitto.conf` | Broker config: listener on 1883, anonymous access, file logging |
+| `mosquitto/data/`, `mosquitto/log/` | Broker persistence and logs |
+| `influxdb/data/` | InfluxDB data directory |
+
+---
+
+## Verify the pipeline
+
+Run these four checks in order. Each one covers a different hop, so the first failure tells you
+where the pipeline broke.
+
 ```bash
-docker exec db pg_dump -U admin basyxTestDB > backup.sql
-tar czf influxdb-backup.tar.gz ./influxdb/data
+# 1. Simulator -> Mosquitto: one JSON message per second. Ctrl-C to stop.
+docker exec -it mosquitto mosquitto_sub -t "WindTurbine/Telemetry" -v
+# Expect: WindTurbine/Telemetry {"timestamp": "...", "wind_speed": 7.1, "power_output": 598.6, ...}
+
+# 2. Telegraf -> InfluxDB: batched writes, no E! lines.
+docker logs telegraf --tail 50 | grep -i "wrote"
+# Expect: "Wrote batch of N metrics in ..."
+
+# 3. InfluxDB is up.
+curl http://localhost:8086/health
+# Expect: {"name":"influxdb","message":"ready for queries and writes","status":"pass",...}
+
+# 4. The AAS is loaded.
+curl http://localhost:8082/shells
+# Expect: a JSON result array containing WindTurbineAAS
 ```
-
-**Q: Why is the UI showing "No data" even though the simulator is running?**
-
-A: Check (1) that the `TimeSeries` submodel's `Endpoint` and `Query` match your current `.env` values (especially `INFLUXDB_ORG`, `INFLUXDB_BUCKET`, `TELEGRAF_MEASUREMENT`); (2) that Telegraf logs show "Wrote batch"; (3) that the time range in the Flux query is not too narrow (default is `-15m`—if the simulator just started, wait 2-3 cycles and try again).
 
 ---
 
 ## Troubleshooting
 
-### Service won't start or is crashing
+### A service will not start
 
 ```bash
-# Check service status and logs
 docker compose ps
-docker logs <service_name>
+docker compose logs <service>     # e.g. aas-environment, telegraf, simulator
 ```
 
-### MQTT messages not reaching InfluxDB
+If `aas-environment` exits immediately, confirm `basyx/rsa-key.pem` exists. The container mounts it
+read-only and fails to start when the path is missing.
+
+### No MQTT messages
+
+Check the simulator. It waits for the broker's health check before connecting, so a broker failure
+shows up here first.
 
 ```bash
-# Verify MQTT topic and format
-docker exec -it mosquitto mosquitto_sub -t "WindTurbine/Telemetry" -v | head -5
-
-# Check Telegraf can parse the JSON
-docker logs telegraf | tail -30
+docker logs wind-turbine-simulator
+docker logs mosquitto
 ```
 
-### InfluxDB queries fail (no data in Visualization tab)
+### Messages reach MQTT but no data lands in InfluxDB
 
-1. Open InfluxDB UI (http://localhost:8086 → Data Explorer)
-2. Select bucket `wind_turbine`, measurement `wind_turbine_metric`
-3. Check if any points exist: `|> range(start: -1h)`
-4. If no points, wait 10 seconds and try again (Telegraf batches writes every `TELEGRAF_FLUSH_INTERVAL`)
-5. If still empty, check `docker logs telegraf` for write errors
+```bash
+docker logs telegraf --tail 30
+```
 
-### Can't log into InfluxDB UI
+Look for connection errors to `mosquitto:1883` or `influxdb:8086`, and for JSON parse errors. A
+token mismatch between `.env` and the running InfluxDB container is the most common cause: InfluxDB
+only applies `INFLUXDB_TOKEN` on first initialization, so changing it later without wiping
+`influxdb/data/` leaves the old token in force.
 
-Check that `INFLUXDB_USERNAME` and `INFLUXDB_PASSWORD` in `.env` are set correctly. Default is `admin` / `influxpassword`.
+### The Visualization tab shows no data
+
+1. Open the InfluxDB UI at http://localhost:8086 and use Data Explorer to confirm points exist in
+   bucket `wind_turbine`, measurement `wind_turbine_metric`, over `range(start: -1h)`.
+2. If the bucket is empty, wait one `TELEGRAF_FLUSH_INTERVAL` (10 seconds by default) and retry.
+3. If the bucket has data but the chart does not, check that the `Endpoint` and `Query` properties
+   in the `TimeSeries` submodel still match your `.env` values. See [Known limitations](#known-limitations).
+4. The Flux query looks back 15 minutes. If the stack just started, give it a few cycles.
+
+### Cannot log into the InfluxDB UI
+
+Use `INFLUXDB_USERNAME` and `INFLUXDB_PASSWORD` from `.env`, by default `admin` and
+`influxpassword`. Like the token, these are only applied when the InfluxDB data directory is first
+created.
 
 ---
 
-## Next Steps
+## Known limitations
 
-- **Customize the Wind Turbine model**: Edit `aas/wind_turbine_aas.json` to add/remove submodels or properties
-- **Connect real sensors**: Replace the simulator with your own MQTT publisher or OPC UA gateway
-- **Add authentication**: See the architecture guide for Keycloak/OIDC/ABAC setup (deferred from this baseline)
-- **Scale telemetry ingestion**: Tune `TELEGRAF_BATCH_SIZE`, `TELEGRAF_BUFFER_LIMIT`, and InfluxDB retention policies for high-volume scenarios
+### AAS values that need manual syncing
+
+The AAS is a static JSON file with no template engine, so three values in the `TimeSeries`
+submodel's `LinkedSegment` duplicate settings from `.env` and must be kept in sync by hand:
+
+| Property | Current value | Must match |
+|---|---|---|
+| `Endpoint` | `http://localhost:8086/api/v2/query?org=basyx` | `INFLUXDB_PUBLIC_ENDPOINT` + `/api/v2/query?org=` + `INFLUXDB_ORG` |
+| `Query` | Flux query over bucket `wind_turbine`, measurement `wind_turbine_metric` | `INFLUXDB_BUCKET` and `TELEGRAF_MEASUREMENT` |
+| `SamplingInterval` | `1000` (ms) | `SIMULATOR_INTERVAL_SECONDS` × 1000 |
+
+The `Endpoint` must stay browser-reachable. The Flux query runs client-side in the UI, so it needs
+the published `localhost` address rather than the `influxdb` Docker service name.
+
+If you change any of `INFLUXDB_PUBLIC_ENDPOINT`, `INFLUXDB_ORG`, `INFLUXDB_BUCKET`,
+`TELEGRAF_MEASUREMENT`, or `SIMULATOR_INTERVAL_SECONDS`, edit the matching properties in
+`aas/wind_turbine_aas.json` and then reload the AAS, either by restarting `aas-environment` or by
+re-uploading the file through the UI.
+
+### Other gaps
+
+- **No authentication.** `ABAC_ENABLED=false` and `basyx-infra.yml` sets `security.type: none`.
+  This is deliberate for a local sandbox and is not configurable through `.env`.
+- **No real sensor ingestion.** Telemetry comes from a CSV replay. Swapping in a real source is
+  described under [Extending the stack](#extending-the-stack).
+- **No 3D visualization.** Charting is limited to the time-series plots the AAS Web UI provides.
+
+---
+
+## Security notes
+
+This stack is built for a single local machine. Do not expose it to a public network.
+
+### Local development
+
+- `.env` is gitignored, so local credentials are never committed.
+- `.env.example` ships development-only defaults (PostgreSQL `admin123`, InfluxDB
+  `influxpassword`, and a fixed InfluxDB token) so the stack runs immediately on `localhost`.
+  Treat all three as public.
+- `basyx/rsa-key.pem` is gitignored and not distributed. Generate your own before the first run:
+  ```bash
+  openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out basyx/rsa-key.pem
+  ```
+  It is the JWS signing key path for `aas-environment`. With authentication disabled it signs
+  nothing, but the file must exist or the container will not start.
+- Authentication is disabled end to end, and the MQTT broker accepts anonymous, unencrypted
+  connections.
+
+### Before any wider deployment
+
+1. Replace every credential in `.env`: `POSTGRES_PASSWORD`, `INFLUXDB_PASSWORD`, and
+   `INFLUXDB_TOKEN`. Generate a new token in the InfluxDB UI, or with `openssl rand -base64 44`
+   before first start.
+2. Enable authentication. This is not configured here; it requires switching `basyx-infra.yml` to
+   an OAuth2 security type, adding an identity provider, and turning on ABAC in `aas-environment`.
+3. Terminate TLS at a reverse proxy such as nginx or Caddy, and stop publishing container ports
+   directly.
+4. Restrict network access to ports 8082, 3000, 8086, and 1883, and set `allow_anonymous false`
+   with a password file in `mosquitto/config/mosquitto.conf`.
+5. Keep images current: `docker compose pull && docker compose up -d --force-recreate`.
+
+---
+
+## Data persistence
+
+| Data | Location | Survives `docker compose down` |
+|---|---|---|
+| AAS and metadata | Anonymous Docker volume on the `db` container | Yes, unless you pass `-v` |
+| Telemetry | `./influxdb/data/` bind mount | Yes |
+| Broker state and logs | `./mosquitto/data/`, `./mosquitto/log/` bind mounts | Yes |
+
+Back up the telemetry directory and dump the database:
+
+```bash
+docker exec postgres_db pg_dump -U admin basyxTestDB > backup.sql
+tar czf influxdb-backup.tar.gz ./influxdb/data
+```
+
+To reset everything and start from empty stores:
+
+```bash
+docker compose down -v
+sudo rm -rf ./influxdb/data ./mosquitto/data ./mosquitto/log
+docker compose up -d
+```
+
+`sudo` is needed because InfluxDB and Mosquitto write into the bind mounts as their own container
+users. Keep `mosquitto/config/` in place; deleting it removes the broker configuration.
+
+---
+
+## Extending the stack
+
+- **Change the model.** Edit `aas/wind_turbine_aas.json` to add submodels or properties, then
+  restart `aas-environment`. You can also upload a shell through the UI or `POST /shells`.
+- **Use real sensors.** Replace the `simulator` service with any publisher (an OPC UA or Modbus
+  gateway, or a custom MQTT client) that emits the same JSON payload on `MQTT_TOPIC`. Telegraf and
+  InfluxDB need no changes.
+- **Change the telemetry rate.** Set `SIMULATOR_INTERVAL_SECONDS` in `.env`, run
+  `docker compose up -d simulator`, then update `SamplingInterval` in the AAS to match, in
+  milliseconds.
+- **Tune ingestion throughput.** `TELEGRAF_BATCH_SIZE`, `TELEGRAF_BUFFER_LIMIT`, and
+  `TELEGRAF_FLUSH_INTERVAL` govern write behaviour under higher message rates.
 
 ---
 
 ## License
 
-This project extends the [Eclipse BaSyx starter kit](https://github.com/eclipse-basyx/basyx-applications/tree/main/basyx-starter-kit). See LICENSE in the repository root.
+MIT. This project extends the
+[Eclipse BaSyx starter kit](https://github.com/eclipse-basyx/basyx-applications/tree/main/basyx-starter-kit).
+See `LICENSE` in the repository root.
