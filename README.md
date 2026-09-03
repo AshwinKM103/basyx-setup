@@ -38,7 +38,6 @@ Nothing else needs to be installed. Python, Go, and the databases all run inside
    ```
 
 2. Generate the RSA key that `aas-environment` expects. The repository does not ship one.
-   `aas-environment` reads it as container UID `65532`, so it must be world-readable.
    ```bash
    openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out basyx/rsa-key.pem
    chmod 644 basyx/rsa-key.pem
@@ -114,8 +113,8 @@ All settings live in `.env`. `docker-compose.yml` also carries a `${VAR:-default
 every variable, so the stack starts even without an `.env` file. To change a value, edit `.env` and
 run `docker compose up -d` again; containers pick up new values on restart and no rebuild is needed.
 
-Telegraf expands `${VAR}` references in `telegraf/telegraf.conf` at startup, reading them from the
-container environment that Compose populates. Editing `telegraf.conf` directly is not required.
+Telegraf reads its `${VAR}` references from the same `.env` values, so editing `telegraf.conf`
+directly is not required.
 
 ### PostgreSQL (semantic data)
 
@@ -231,10 +230,8 @@ docker compose ps
 docker compose logs <service>     # e.g. aas-environment, telegraf, simulator
 ```
 
-If `aas-environment` restarts in a loop, check its logs for `failed to read private key file`.
-The container mounts `basyx/rsa-key.pem` read-only and reads it as UID `65532`, so the file must
-both exist and be world-readable (`chmod 644 basyx/rsa-key.pem` — `openssl genpkey`'s default
-permissions depend on your umask and are not always readable by that UID).
+If `aas-environment` restarts in a loop with `failed to read private key file` in its logs, run
+`chmod 644 basyx/rsa-key.pem`.
 
 ### No MQTT messages
 
@@ -320,9 +317,7 @@ This stack is built for a single local machine. Do not expose it to a public net
   openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out basyx/rsa-key.pem
   chmod 644 basyx/rsa-key.pem
   ```
-  It is the JWS signing key path for `aas-environment`. With authentication disabled it signs
-  nothing, but the file must exist and be readable by the container (UID `65532`) or the
-  container exits with `failed to read private key file: permission denied`.
+  `aas-environment` will not start without it.
 - Authentication is disabled end to end, and the MQTT broker accepts anonymous, unencrypted
   connections.
 
@@ -364,8 +359,8 @@ sudo rm -rf ./influxdb/data ./mosquitto/data ./mosquitto/log
 docker compose up -d
 ```
 
-`sudo` is needed because InfluxDB and Mosquitto write into the bind mounts as their own container
-users. Keep `mosquitto/config/` in place; deleting it removes the broker configuration.
+The bind-mount contents are owned by the container users, hence `sudo`. Keep `mosquitto/config/` in
+place; deleting it removes the broker configuration.
 
 ---
 

@@ -1,10 +1,9 @@
 """Wind-turbine telemetry simulator.
 
 Replays simulator/data/wind_turbine_mock.csv over MQTT on a loop, one row every
-SIMULATOR_INTERVAL_SECONDS. Every field except the timestamp is taken verbatim from the CSV so the
-waveform shapes carry over once a real CSV feed replaces this file; the timestamp is
-stamped with the current wall-clock time on publish so the BaSyx Time Series plugin's
-relative time ranges (e.g. "Last 5m") always show fresh, live-looking data.
+SIMULATOR_INTERVAL_SECONDS. Every field is taken verbatim from the CSV except the timestamp, which
+is stamped with the current wall-clock time on publish so the BaSyx Time Series plugin's relative
+time ranges (e.g. "Last 5m") show live data.
 """
 
 import csv
