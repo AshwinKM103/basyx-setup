@@ -38,8 +38,10 @@ Nothing else needs to be installed. Python, Go, and the databases all run inside
    ```
 
 2. Generate the RSA key that `aas-environment` expects. The repository does not ship one.
+   `aas-environment` reads it as container UID `65532`, so it must be world-readable.
    ```bash
    openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out basyx/rsa-key.pem
+   chmod 644 basyx/rsa-key.pem
    ```
 
 3. Start the stack.
@@ -229,8 +231,10 @@ docker compose ps
 docker compose logs <service>     # e.g. aas-environment, telegraf, simulator
 ```
 
-If `aas-environment` exits immediately, confirm `basyx/rsa-key.pem` exists. The container mounts it
-read-only and fails to start when the path is missing.
+If `aas-environment` restarts in a loop, check its logs for `failed to read private key file`.
+The container mounts `basyx/rsa-key.pem` read-only and reads it as UID `65532`, so the file must
+both exist and be world-readable (`chmod 644 basyx/rsa-key.pem` — `openssl genpkey`'s default
+permissions depend on your umask and are not always readable by that UID).
 
 ### No MQTT messages
 
@@ -314,9 +318,11 @@ This stack is built for a single local machine. Do not expose it to a public net
 - `basyx/rsa-key.pem` is gitignored and not distributed. Generate your own before the first run:
   ```bash
   openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out basyx/rsa-key.pem
+  chmod 644 basyx/rsa-key.pem
   ```
   It is the JWS signing key path for `aas-environment`. With authentication disabled it signs
-  nothing, but the file must exist or the container will not start.
+  nothing, but the file must exist and be readable by the container (UID `65532`) or the
+  container exits with `failed to read private key file: permission denied`.
 - Authentication is disabled end to end, and the MQTT broker accepts anonymous, unencrypted
   connections.
 
